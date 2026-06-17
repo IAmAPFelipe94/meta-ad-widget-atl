@@ -42,37 +42,138 @@
   </div>
 
   <script>
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwJFeRcPNtTpkUflhZFez-c6sL9mUCHyF50IK0XS9pl0KSjVZncL-YDOUwlnjlKVeXXOg/exec";
+    const PROXY_URL         = "https://ghl-proxy.apfelipe94.workers.dev";
+    const META_ACCESS_TOKEN = "EAANYnXKToskBRkBjjN52Qb6dCYdtqSHxMXWGrviH6ZAdrhbdBK2RYJ2Q7OQYv6yXDYKDNoClSjxaKZCg6BG786eJh56qbrP0yaa2PVFaxn0Swa4dk2QeCm578WvRZByMeM818Mpx1TUtV09taPOinJV4tCZAVKFFdVgp4imKq2YMRVSZA5sJPK7Yi67G7";
+    const META_AD_ACCOUNT_ID = "act_710184103636781";
+    const CAMPAIGN_FILTER    = "DDA";
 
-    function handleData(json) {
+    async function loadReport() {
       const tbody = document.getElementById("report-body");
-      const rows = json.data || [];
+      try {
+        const [cpcMap, contacts, wonMap] = await Promise.all([
+          fetchMetaCPC(),
+          fetchGHLContacts(),
+          fetchWonOpps()
+        ]);
 
-      if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="loading">No data available.</td></tr>';
-        return;
+        const adMap = {};
+        contacts.forEach(contact => {
+          const attrs = contact.attributions || [];
+          const first = attrs.find(a => a.isFirst) || attrs[0] || {};
+          const campaign = first.campaignName || first.campaign || first.utmCampaign || contact.source || "Unknown";
+          const adName   = first.adName || first.ad_name || first.utmContent || first.utm_content || first.adSetName || "Unknown Ad";
+          const key = `${campaign}||${adName}`;
+
+          if (!adMap[key]) {
+            adMap[key] = {
+              campaign, adName,
+              cpc: cpcMap[adName] || 0,
+              conversions: 0, wonCount: 0, wonValue: 0
+            };
+          }
+          adMap[key].conversions++;
+          const contactId = contact.id || contact.contactId;
+          if (contactId && wonMap[contactId]) {
+            adMap[key].wonCount++;
+            adMap[key].wonValue += wonMap[contactId];
+          }
+        });
+
+        const rows = Object.values(adMap)
+          .filter(r => r.campaign.toUpperCase().startsWith(CAMPAIGN_FILTER))
+          .sort((a, b) => b.wonValue !== a.wonValue ? b.wonValue - a.wonValue : b.conversions - a.conversions);
+
+        if (rows.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="loading">No data found.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = rows.map(r => `
+          <tr>
+            <td>${r.campaign}</td>
+            <td>${r.adName}</td>
+            <td>${r.cpc ? "$" + r.cpc.toFixed(2) : "$0.00"}</td>
+            <td>${r.conversions}</td>
+            <td>${r.wonCount} Won</td>
+            <td>$${r.wonValue.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          </tr>
+        `).join("");
+
+      } catch(err) {
+        tbody.innerHTML = `<tr><td colspan="6" class="error">Error: ${err.message}</td></tr>`;
+        console.error(err);
       }
-
-      tbody.innerHTML = rows.map(row => `
-        <tr>
-          <td>${row.campaign}</td>
-          <td>${row.ad}</td>
-          <td>${row.cpc}</td>
-          <td>${row.conversions}</td>
-          <td>${row.won}</td>
-          <td>${row.value}</td>
-        </tr>
-      `).join("");
     }
 
-    // JSONP — bypasses CORS completely
-    const script = document.createElement("script");
-    script.src = APPS_SCRIPT_URL + "?callback=handleData";
-    script.onerror = function() {
-      document.getElementById("report-body").innerHTML =
-        '<tr><td colspan="6" class="error">Failed to load data. Please try again.</td></tr>';
-    };
-    document.head.appendChild(script);
+    async function fetchMetaCPC() {
+      const cpcMap = {};
+      const end   = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 30);
+      const fmt = d => d.toISOString().split("T")[0];
+      const timeRange = encodeURIComponent(JSON.stringify({ since: fmt(start), until: fmt(end) }));
+      const url = `https://graph.facebook.com/v20.0/${META_AD_ACCOUNT_ID}/insights?level=ad&fields=ad_name,cost_per_result&time_range=${timeRange}&limit=500&access_token=${META_ACCESS_TOKEN}`;
+      const res  = await fetch(url);
+      const json = await res.json();
+      (json.data || []).forEach(ad => {
+        const cprArray = ad.cost_per_result || [];
+        let cpc = 0;
+        if (cprArray.length > 0 && cprArray[0].values && cprArray[0].values.length > 0) {
+          cpc = parseFloat(cprArray[0].values[0].value || 0);
+        }
+        if (ad.ad_name) cpcMap[ad.ad_name] = cpc;
+      });
+      return cpcMap;
+    }
+
+    async function fetchGHLContacts() {
+      const all = [];
+      let page = 1;
+      while (true) {
+        const res  = await fetch(`${PROXY_URL}/?endpoint=contacts&page=${page}`);
+        const json = await res.json();
+        const contacts = json.contacts || [];
+
+        const fb = contacts.filter(c => {
+          const src = (c.source || "").toLowerCase();
+          if (src.includes("facebook") || src.includes("fb") || src.includes("meta")) return true;
+          return (c.attributions || []).some(a => {
+            const s = (a.utmSessionSource || "").toLowerCase();
+            const m = (a.medium || "").toLowerCase();
+            const hasAd  = !!(a.adName || a.utmContent);
+            const hasCmp = !!(a.campaignName || a.utmCampaign);
+            return s.includes("facebook") || s.includes("fb") || s.includes("meta")
+                || m.includes("facebook") || m.includes("paid") || (hasAd && hasCmp);
+          });
+        });
+
+        all.push(...fb);
+        if (contacts.length < 100) break;
+        page++;
+        await new Promise(r => setTimeout(r, 250));
+      }
+      return all;
+    }
+
+    async function fetchWonOpps() {
+      const wonMap = {};
+      let page = 1;
+      while (true) {
+        const res  = await fetch(`${PROXY_URL}/?endpoint=opportunities&page=${page}`);
+        const json = await res.json();
+        const opps = json.opportunities || [];
+        opps.forEach(opp => {
+          const cid = opp.contactId || (opp.contact && opp.contact.id);
+          if (cid) wonMap[cid] = (wonMap[cid] || 0) + parseFloat(opp.monetaryValue || 0);
+        });
+        if (opps.length < 100) break;
+        page++;
+        await new Promise(r => setTimeout(r, 250));
+      }
+      return wonMap;
+    }
+
+    loadReport();
   </script>
 </body>
 </html>
