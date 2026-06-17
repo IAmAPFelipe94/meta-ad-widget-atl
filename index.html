@@ -1,0 +1,73 @@
+<!-- 
+  META Ad Performance Widget for GHL Dashboard
+  Paste this entire code into a GHL Custom HTML widget
+  Replace APPS_SCRIPT_URL with your deployed Apps Script URL
+-->
+<div id="meta-report">
+  <div class="report-header">
+    <h1>META Ad Performance</h1>
+    <p class="report-date">Live Dashboard View</p>
+  </div>
+  <div class="table-responsive">
+    <table>
+      <thead>
+        <tr>
+          <th>Campaign Name</th>
+          <th>Ad</th>
+          <th>Cost Per Conversion</th>
+          <th>Conversions</th>
+          <th>Converted to Won</th>
+          <th>Total Won Value</th>
+        </tr>
+      </thead>
+      <tbody id="report-body">
+        <tr><td colspan="6" class="loading">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+  #meta-report { width: 100%; font-family: Arial, sans-serif; background: #fff; padding: 10px 0; }
+  .report-header { text-align: center; margin-bottom: 15px; }
+  .report-header h1 { font-size: 22px; font-weight: bold; color: #000; margin: 0 0 4px 0; }
+  .report-date { font-size: 12px; color: #666; font-style: italic; margin: 0; }
+  .table-responsive { overflow-x: auto; border: 1px solid #d1d5db; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th { background: #f8fafc; color: #374151; font-weight: bold; font-size: 18px; padding: 8px 12px; border: 1px solid #d1d5db; text-align: center; }
+  td { padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 18px; color: #000; text-align: center; white-space: nowrap; }
+  .loading { color: #9ca3af; padding: 20px; }
+  .error { color: #ef4444; padding: 20px; }
+</style>
+
+<script>
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwJFeRcPNtTpkUflhZFez-c6sL9mUCHyF50IK0XS9pl0KSjVZncL-YDOUwlnjlKVeXXOg/exec";
+
+  fetch(APPS_SCRIPT_URL)
+    .then(res => res.json())
+    .then(json => {
+      const tbody = document.getElementById("report-body");
+      const rows = json.data || [];
+
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="loading">No data available.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = rows.map(row => `
+        <tr>
+          <td>${row.campaign}</td>
+          <td>${row.ad}</td>
+          <td>${row.cpc}</td>
+          <td>${row.conversions}</td>
+          <td>${row.won}</td>
+          <td>${row.value}</td>
+        </tr>
+      `).join("");
+    })
+    .catch(err => {
+      document.getElementById("report-body").innerHTML =
+        '<tr><td colspan="6" class="error">Failed to load data. Please try again.</td></tr>';
+      console.error("META report error:", err);
+    });
+</script>
