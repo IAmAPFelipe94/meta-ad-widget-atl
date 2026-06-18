@@ -71,7 +71,7 @@
 
   <script>
     const PROXY_URL = "https://ghl-proxy.apfelipe94.workers.dev";
-    let allData = []; // Full year cache
+    let allData = [];
 
     function fmt(d) { return d.toISOString().split("T")[0]; }
 
@@ -107,48 +107,68 @@
         if (!startDate || !endDate) { alert("Please select both dates."); return; }
       } else {
         const d = getDates(preset);
-        startDate = d.start; endDate = d.end;
+        startDate = d.start;
+        endDate   = d.end;
       }
       document.getElementById("date-label").textContent = `${startDate} → ${endDate}`;
       renderTable(startDate, endDate);
     }
 
+    function parseNum(s) {
+      if (!s) return 0;
+      return parseFloat(String(s).replace(/[$,\s]/g, "")) || 0;
+    }
+
     function renderTable(startDate, endDate) {
       const tbody = document.getElementById("report-body");
 
-      // Filter cached data by date range
-      const filtered = allData.filter(r => r.date >= startDate && r.date <= endDate);
+      // Filter rows by date range
+      const filtered = allData.filter(r => {
+        const d = (r.date || "").trim();
+        return d >= startDate && d <= endDate;
+      });
 
       if (filtered.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" class="loading">No data for selected period.</td></tr>';
         return;
       }
 
-      // Aggregate by campaign + ad name
+      // Aggregate by campaign + ad
       const adMap = {};
       filtered.forEach(r => {
         const key = `${r.campaign}||${r.ad}`;
         if (!adMap[key]) {
-          adMap[key] = { campaign: r.campaign, ad: r.ad, conversions: 0, totalSpend: 0, won: 0, value: 0 };
+          adMap[key] = {
+            campaign: r.campaign,
+            ad: r.ad,
+            conversions: 0,
+            totalSpend: 0,
+            won: 0,
+            value: 0
+          };
         }
-        const conv = parseInt(r.conversions.replace(/,/g, "")) || 0;
-        const cpc  = parseFloat(r.cpc.replace(/[$,]/g, "")) || 0;
-        const val  = parseFloat(r.value.replace(/[$,]/g, "")) || 0;
-        const won  = parseInt(r.won.replace(/,/g, "")) || 0;
-        adMap[key].conversions  += conv;
-        adMap[key].totalSpend   += conv * cpc; // reconstruct spend
-        adMap[key].won          += won;
-        adMap[key].value        += val;
+        const conv = parseNum(r.conversions);
+        const cpc  = parseNum(r.cpc);
+        adMap[key].conversions += conv;
+        adMap[key].totalSpend  += conv * cpc;
+        adMap[key].won         += parseNum(r.won);
+        adMap[key].value       += parseNum(r.value);
       });
 
+      // Build final rows with calculated CPC and ROAS
       const rows = Object.values(adMap)
         .map(r => ({
           ...r,
           cpc:  r.conversions > 0 ? r.totalSpend / r.conversions : 0,
-          roas: r.conversions > 0 && r.totalSpend > 0 ? r.value / r.totalSpend : 0
+          roas: r.totalSpend > 0 ? r.value / r.totalSpend : 0
         }))
         .filter(r => r.conversions > 0 || r.value > 0)
         .sort((a, b) => b.value !== a.value ? b.value - a.value : b.conversions - a.conversions);
+
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No active ads for selected period.</td></tr>';
+        return;
+      }
 
       tbody.innerHTML = rows.map(r => `
         <tr>
@@ -163,12 +183,12 @@
       `).join("");
     }
 
-    // Load full year data once on startup, then filter client-side
+    // Load full year data once, filter client-side instantly
     fetch(`${PROXY_URL}/?endpoint=sheet`)
       .then(res => res.json())
       .then(json => {
         allData = json.data || [];
-        applyDateRange(); // Apply default preset
+        applyDateRange();
       })
       .catch(() => {
         document.getElementById("report-body").innerHTML =
