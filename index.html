@@ -188,6 +188,9 @@
       .then(res => res.json())
       .then(json => {
         allData = json.data || [];
+        // Debug: log first 3 rows to check date format
+        console.log("Sample rows:", JSON.stringify(allData.slice(0, 3)));
+        console.log("Total rows:", allData.length);
         applyDateRange();
       })
       .catch(() => {
