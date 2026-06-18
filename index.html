@@ -72,6 +72,7 @@
   <script>
     const PROXY_URL = "https://ghl-proxy.apfelipe94.workers.dev";
     let allData = [];
+    let wonData = {};
 
     function fmt(d) { return d.toISOString().split("T")[0]; }
 
@@ -155,6 +156,13 @@
         adMap[key].value       += parseNum(r.value);
       });
 
+      // Merge won data by ad name
+      Object.values(adMap).forEach(r => {
+        const w = wonData[r.ad] || {};
+        r.won   = w.won   || 0;
+        r.value = w.value || 0;
+      });
+
       // Build final rows with calculated CPC and ROAS
       const rows = Object.values(adMap)
         .map(r => ({
@@ -183,14 +191,12 @@
       `).join("");
     }
 
-    // Load full year data once, filter client-side instantly
+    // Load full year data + won data once, filter client-side instantly
     fetch(`${PROXY_URL}/?endpoint=sheet`)
       .then(res => res.json())
       .then(json => {
         allData = json.data || [];
-        // Debug: log first 3 rows to check date format
-        console.log("Sample rows:", JSON.stringify(allData.slice(0, 3)));
-        console.log("Total rows:", allData.length);
+        wonData = json.wonData || {};
         applyDateRange();
       })
       .catch(() => {
