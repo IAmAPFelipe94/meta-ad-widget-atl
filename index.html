@@ -34,6 +34,7 @@
     <div class="date-controls">
       <label>Select date range</label>
       <select id="preset-select" onchange="handlePresetChange()">
+        <option value="last7">Last 7 days</option>
         <option value="last30">Last 30 days</option>
         <option value="last60">Last 60 days</option>
         <option value="last90">Last 90 days</option>
@@ -57,13 +58,14 @@
             <th>Ad</th>
             <th>Conversion</th>
             <th>CPC</th>
+            <th>Total Spend</th>
             <th>Won</th>
             <th>Value</th>
             <th>ROAS</th>
           </tr>
         </thead>
         <tbody id="report-body">
-          <tr><td colspan="7" class="loading">Loading...</td></tr>
+          <tr><td colspan="8" class="loading">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -79,6 +81,7 @@
     function getDates(preset) {
       const end   = new Date();
       const start = new Date();
+      if (preset === "last7")  start.setDate(end.getDate() - 7);
       if (preset === "last30") start.setDate(end.getDate() - 30);
       if (preset === "last60") start.setDate(end.getDate() - 60);
       if (preset === "last90") start.setDate(end.getDate() - 90);
@@ -130,7 +133,7 @@
       });
 
       if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="loading">No data for selected period.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">No data for selected period.</td></tr>';
         return;
       }
 
@@ -174,7 +177,7 @@
         .sort((a, b) => b.value !== a.value ? b.value - a.value : b.conversions - a.conversions);
 
       if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="loading">No active ads for selected period.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">No active ads for selected period.</td></tr>';
         return;
       }
 
@@ -184,6 +187,7 @@
           <td>${r.ad}</td>
           <td>${r.conversions.toLocaleString()}</td>
           <td>$${r.cpc.toFixed(2)}</td>
+          <td>$${r.totalSpend.toFixed(2)}</td>
           <td>${r.won}</td>
           <td>$${r.value.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
           <td>${r.roas.toFixed(2)}</td>
@@ -201,7 +205,7 @@
       })
       .catch(() => {
         document.getElementById("report-body").innerHTML =
-          '<tr><td colspan="7" class="error">Failed to load data.</td></tr>';
+          '<tr><td colspan="8" class="error">Failed to load data.</td></tr>';
       });
   </script>
 </body>
