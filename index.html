@@ -35,7 +35,7 @@
       <label>Select date range</label>
       <select id="preset-select" onchange="handlePresetChange()">
         <option value="last7">Last 7 days</option>
-        <option value="last30">Last 30 days</option>
+        <option value="last30" selected>Last 30 days</option>
         <option value="last60">Last 60 days</option>
         <option value="last90">Last 90 days</option>
         <option value="mtd">Month to date</option>
@@ -73,8 +73,7 @@
 
   <script>
     const PROXY_URL = "https://ghl-proxy.apfelipe94.workers.dev";
-    let allData = [];
-    let wonData = {};
+    let allData = []; // One row per contact
 
     function fmt(d) { return d.toISOString().split("T")[0]; }
 
@@ -111,29 +110,28 @@
         if (!startDate || !endDate) { alert("Please select both dates."); return; }
       } else {
         const d = getDates(preset);
-        startDate = d.start;
-        endDate   = d.end;
+        startDate = d.start; endDate = d.end;
       }
       document.getElementById("date-label").textContent = `${startDate} → ${endDate}`;
       renderTable(startDate, endDate);
     }
 
     function parseNum(s) {
-      if (!s) return 0;
-      return parseFloat(String(s).replace(/[$,\s]/g, "")) || 0;
+      return parseFloat(String(s || "0").replace(/[$,\s]/g, "")) || 0;
     }
 
     function renderTable(startDate, endDate) {
       const tbody = document.getElementById("report-body");
 
-      // Filter rows by date range
+      // Filter contacts by dateAdded within selected range
+      // Won data is ALL-TIME for those contacts (not filtered by date)
       const filtered = allData.filter(r => {
         const d = (r.date || "").trim();
         return d >= startDate && d <= endDate;
       });
 
       if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading">No data for selected period.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">No leads found for selected period.</td></tr>';
         return;
       }
 
@@ -151,22 +149,17 @@
             value: 0
           };
         }
-        const conv = parseNum(r.conversions);
-        const cpc  = parseNum(r.cpc);
+        const conv  = parseNum(r.conversion);
+        const cpc   = parseNum(r.cpc);
+        const won   = parseNum(r.won);
+        const value = parseNum(r.value);
+
         adMap[key].conversions += conv;
         adMap[key].totalSpend  += conv * cpc;
-        adMap[key].won         += parseNum(r.won);
-        adMap[key].value       += parseNum(r.value);
+        adMap[key].won         += won;
+        adMap[key].value       += value;
       });
 
-      // Merge won data by ad name
-      Object.values(adMap).forEach(r => {
-        const w = wonData[r.ad] || {};
-        r.won   = w.won   || 0;
-        r.value = w.value || 0;
-      });
-
-      // Build final rows with calculated CPC and ROAS
       const rows = Object.values(adMap)
         .map(r => ({
           ...r,
@@ -185,7 +178,7 @@
         <tr>
           <td>${r.campaign}</td>
           <td>${r.ad}</td>
-          <td>${r.conversions.toLocaleString()}</td>
+          <td>${r.conversions}</td>
           <td>$${r.cpc.toFixed(2)}</td>
           <td>$${r.totalSpend.toFixed(2)}</td>
           <td>${r.won}</td>
@@ -195,12 +188,11 @@
       `).join("");
     }
 
-    // Load full year data + won data once, filter client-side instantly
+    // Load all contact data once, filter client-side
     fetch(`${PROXY_URL}/?endpoint=sheet`)
       .then(res => res.json())
       .then(json => {
         allData = json.data || [];
-        wonData = json.wonData || {};
         applyDateRange();
       })
       .catch(() => {
