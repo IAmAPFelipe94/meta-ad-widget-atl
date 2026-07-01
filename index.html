@@ -1,235 +1,191 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #fff; }
-    #report { width: 100%; padding: 10px; }
-    .report-header { text-align: center; margin-bottom: 12px; }
-    .report-header h1 { font-size: 18px; font-weight: bold; color: #000; margin: 0 0 2px 0; }
-    .report-date { font-size: 11px; color: #666; font-style: italic; margin: 0; }
-    .date-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; }
-    .date-controls label { font-size: 13px; color: #374151; font-weight: 600; }
-    .date-controls select { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; color: #374151; background: #fff; cursor: pointer; }
-    .date-range-inputs { display: flex; align-items: center; gap: 6px; }
-    .date-range-inputs input[type="date"] { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; }
-    .date-range-inputs span { font-size: 13px; color: #6b7280; }
-    .apply-btn { padding: 6px 16px; background: #16a34a; color: #fff; border: none; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .apply-btn:hover { background: #15803d; }
-    .table-responsive { overflow-x: auto; border: 1px solid #d1d5db; }
-    table { width: 100%; border-collapse: collapse; background: #fff; }
-    th { background: #34A853; color: #fff; font-weight: bold; font-size: 13px; padding: 7px 10px; border: 1px solid #2d9147; text-align: center; }
-    td { padding: 6px 10px; border: 1px solid #e5e7eb; font-size: 13px; color: #000; text-align: center; white-space: nowrap; }
-    tr:nth-child(even) td { background: #f0fdf4; }
-    .loading { color: #9ca3af; padding: 20px; text-align: center; }
-    .error { color: #ef4444; padding: 20px; text-align: center; }
-    .won-note { font-size: 11px; color: #6b7280; font-style: italic; margin-top: 6px; text-align: right; }
-  </style>
-</head>
-<body>
-  <div id="report">
-    <div class="report-header">
-      <h1>Google Ads Performance</h1>
-      <p class="report-date" id="date-label">Live Dashboard View</p>
-    </div>
-    <div class="date-controls">
-      <label>Select date range</label>
-      <select id="preset-select" onchange="handlePresetChange()">
-        <option value="last7">Last 7 days</option>
-        <option value="last30" selected>Last 30 days</option>
-        <option value="last60">Last 60 days</option>
-        <option value="last90">Last 90 days</option>
-        <option value="mtd">Month to date</option>
-        <option value="ytd">Year to date</option>
-        <option value="custom">Custom range</option>
-      </select>
-      <div class="date-range-inputs" id="custom-range" style="display:none;">
-        <span>From</span>
-        <input type="date" id="start-date">
-        <span>To</span>
-        <input type="date" id="end-date">
-      </div>
-      <button class="apply-btn" onclick="applyDateRange()">Apply</button>
-    </div>
-    <div class="table-responsive">
-      <table>
-        <thead>
-          <tr>
-            <th>Campaign</th>
-            <th>Ad Group</th>
-            <th>Clicks</th>
-            <th>Impressions</th>
-            <th>CPC</th>
-            <th>Total Spend</th>
-            <th>Conversions</th>
-            <th>Cost/Conv</th>
-            <th>Won</th>
-            <th>Won Value</th>
-            <th>ROAS</th>
-          </tr>
-        </thead>
-        <tbody id="report-body">
-          <tr><td colspan="11" class="loading">Loading...</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="won-note">Won / Won Value reflect leads acquired within the selected date range.</p>
-  </div>
+// ==========================================
+// Google Ads Script — Campaign Performance + GHL Won Data
+// Runs inside Google Ads → Tools → Scripts
+// ==========================================
 
-  <script>
-    const PROXY_URL = "https://gads-proxy-atl.apfelipe94.workers.dev/";
+var SHEET_ID        = "1VjccH-ECPrIW2SHQYPqs_Yr5juLKfwa2K8Gq3vzPans";
+var SHEET_NAME      = "Google Ads Performance";
+var GHL_API_TOKEN   = "pit-91b95fb3-e451-4969-84c1-0d4584f771f5";
+var GHL_LOCATION_ID = "PE897wkaL5TRNp0n9cRU";
+var REPORT_START    = "2026-01-01";
 
-    // Two datasets loaded in parallel:
-    // perfData    — daily Google Ads metrics (date, campaign, adGroup, conversions, cpc, cost, clicks, impressions)
-    // contactData — one row per GHL contact (dateAdded, campaign, adGroup, won, wonValue)
-    let perfData    = [];
-    let contactData = [];
-    let loaded      = 0;
+function main() {
+  var ss    = SpreadsheetApp.openById(SHEET_ID);
+  var sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
+  else sheet.clear();
 
-    function fmt(d) { return d.toISOString().split("T")[0]; }
+  var headers = ["Date", "Campaign", "Ad Group", "Conversions", "CPC", "Cost", "Clicks", "Impressions", "Won", "Won Value"];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+       .setBackground("#34A853").setFontColor("#FFFFFF").setFontWeight("bold");
 
-    function getDates(preset) {
-      const end   = new Date();
-      const start = new Date();
-      if (preset === "last7")  start.setDate(end.getDate() - 7);
-      if (preset === "last30") start.setDate(end.getDate() - 30);
-      if (preset === "last60") start.setDate(end.getDate() - 60);
-      if (preset === "last90") start.setDate(end.getDate() - 90);
-      if (preset === "mtd")    start.setDate(1);
-      if (preset === "ytd")  { start.setMonth(0); start.setDate(1); }
-      return { start: fmt(start), end: fmt(end) };
+  // Step 1: Fetch won opportunities from GHL
+  Logger.log("Fetching won opportunities from GHL...");
+  var wonOppsByContact = fetchWonOpportunities();
+  Logger.log("Won opportunities: " + Object.keys(wonOppsByContact).length);
+
+  // Step 2: Fetch Google Ads contacts from GHL
+  Logger.log("Fetching Google Ads contacts from GHL...");
+  var contactMap = fetchGoogleAdsContacts();
+  Logger.log("Google Ads contacts: " + Object.keys(contactMap).length);
+
+  // Step 3: Build won map by page URL pattern
+  // Map landing page URL → Google Ads ad group name
+  var urlToAdGroup = {
+    "garage-flooring":           "Garage Flooring",
+    "garage-ceiling-racks":      "Garage Ceiling Storage",
+    "slatwall-storage":          "Garage Ceiling Storage",
+    "monkey-bars":               "Garage Shelving",
+    "garage-storage-projects":   "Garage Organization Company",
+    "garage-shelving":           "Garage Shelving",
+    "contact":                   "Garage Organization Company",
+    "/":                         "Garage Organization Company"
+  };
+
+  function getAdGroupFromUrl(url) {
+    if (!url) return "Garage Organization Company";
+    url = url.toLowerCase();
+    if (url.indexOf("garage-flooring") !== -1)         return "Garage Flooring";
+    if (url.indexOf("garage-ceiling") !== -1)           return "Garage Ceiling Storage";
+    if (url.indexOf("garage-ceiling-racks") !== -1)     return "Garage Ceiling Storage";
+    if (url.indexOf("slatwall") !== -1)                 return "Garage Ceiling Storage";
+    if (url.indexOf("monkey-bar") !== -1)               return "Garage Shelving";
+    if (url.indexOf("garage-shelving") !== -1)          return "Garage Shelving";
+    if (url.indexOf("garage-storage") !== -1)           return "Garage Organization Company";
+    if (url.indexOf("contact") !== -1)                  return "Garage Organization Company";
+    return "Garage Organization Company"; // default for homepage
+  }
+
+  // Use "Atlanta Search" as the campaign for all ATL contacts
+  var ATL_CAMPAIGN = "Atlanta Search";
+
+  var wonByAdGroup = {};
+  for (var contactId in contactMap) {
+    var contact  = contactMap[contactId];
+    var adGroup  = getAdGroupFromUrl(contact.pageUrl);
+    var key      = ATL_CAMPAIGN + "||" + adGroup;
+    if (!wonByAdGroup[key]) wonByAdGroup[key] = { won: 0, wonValue: 0 };
+    if (wonOppsByContact[contactId]) {
+      wonByAdGroup[key].won++;
+      wonByAdGroup[key].wonValue += wonOppsByContact[contactId];
     }
+  }
+  Logger.log("Won by ad group keys: " + JSON.stringify(Object.keys(wonByAdGroup)));
 
-    function handlePresetChange() {
-      const preset = document.getElementById("preset-select").value;
-      const cr = document.getElementById("custom-range");
-      if (preset === "custom") {
-        cr.style.display = "flex";
-        document.getElementById("start-date").value = fmt(new Date(Date.now() - 30*24*60*60*1000));
-        document.getElementById("end-date").value   = fmt(new Date());
-      } else {
-        cr.style.display = "none";
-      }
-    }
+  // Step 4: GAQL query
+  var startDate = new Date(REPORT_START);
+  var endDate   = new Date();
+  var query = [
+    "SELECT segments.date, campaign.name, campaign.id, ad_group.name, ad_group.id,",
+    "  metrics.conversions, metrics.average_cpc, metrics.cost_micros,",
+    "  metrics.clicks, metrics.impressions",
+    "FROM ad_group",
+    "WHERE segments.date BETWEEN '" + Utilities.formatDate(startDate, "UTC", "yyyy-MM-dd") + "'",
+    "  AND '" + Utilities.formatDate(endDate, "UTC", "yyyy-MM-dd") + "'",
+    "  AND campaign.status != 'REMOVED'",
+    "  AND metrics.impressions > 0",
+    "  AND campaign.name LIKE '%Atlanta%'",
+    "ORDER BY segments.date DESC LIMIT 5000"
+  ].join(" ");
 
-    function applyDateRange() {
-      const preset = document.getElementById("preset-select").value;
-      let startDate, endDate;
-      if (preset === "custom") {
-        startDate = document.getElementById("start-date").value;
-        endDate   = document.getElementById("end-date").value;
-        if (!startDate || !endDate) { alert("Please select both dates."); return; }
-      } else {
-        const d = getDates(preset);
-        startDate = d.start; endDate = d.end;
-      }
-      document.getElementById("date-label").textContent = `${startDate} → ${endDate}`;
-      renderTable(startDate, endDate);
-    }
+  var rows = [];
+  var report = AdsApp.search(query);
+  while (report.hasNext()) {
+    var row        = report.next();
+    var campaignId = String(row.campaign.id || "");
+    var adGroupId  = String(row.adGroup.id  || "");
+    var keyByName  = row.campaign.name + "||" + row.adGroup.name;
+    var wonData = wonByAdGroup[keyByName] || null;
+    var won  = wonData ? wonData.won      : 0;
+    var wonV = wonData ? wonData.wonValue : 0;
+    rows.push([
+      row.segments.date, row.campaign.name, row.adGroup.name,
+      row.metrics.conversions || 0,
+      (row.metrics.averageCpc || 0) / 1000000,
+      (row.metrics.costMicros || 0) / 1000000,
+      row.metrics.clicks || 0,
+      row.metrics.impressions || 0,
+      won, wonV
+    ]);
+  }
 
-    function renderTable(startDate, endDate) {
-      const tbody = document.getElementById("report-body");
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    sheet.getRange(2, 5, rows.length, 2).setNumberFormat("$#,##0.00");
+    sheet.getRange(2, 10, rows.length, 1).setNumberFormat("$#,##0.00");
+    Logger.log("Written " + rows.length + " rows to sheet");
+  }
 
-      // ── 1. Aggregate daily spend/clicks by campaign+adGroup within date range ──
-      const perfMap = {};
-      perfData
-        .filter(r => r.date >= startDate && r.date <= endDate)
-        .forEach(r => {
-          const key = `${r.campaign}||${r.adGroup}`;
-          if (!perfMap[key]) perfMap[key] = { campaign: r.campaign, adGroup: r.adGroup,
-            clicks: 0, impressions: 0, cost: 0, conversions: 0 };
-          perfMap[key].clicks      += parseFloat(r.clicks)      || 0;
-          perfMap[key].impressions += parseFloat(r.impressions)  || 0;
-          perfMap[key].cost        += parseFloat(r.cost)         || 0;
-          perfMap[key].conversions += parseFloat(r.conversions)  || 0;
-        });
+  for (var i = 1; i <= headers.length; i++) sheet.autoResizeColumn(i);
+  sheet.getRange(1, headers.length + 2).setValue("Last updated: " + new Date().toLocaleString());
+  Logger.log("Completed successfully");
+}
 
-      // ── 2. Aggregate Won/WonValue from contacts acquired within date range ──
-      // Each contact row = one lead, so summing is correct (like Meta dashboard)
-      const wonMap = {};
-      contactData
-        .filter(r => r.date >= startDate && r.date <= endDate)
-        .forEach(r => {
-          const key = `${r.campaign}||${r.adGroup}`;
-          if (!wonMap[key]) wonMap[key] = { won: 0, wonValue: 0 };
-          wonMap[key].won      += parseFloat(r.won)      || 0;
-          wonMap[key].wonValue += parseFloat(r.wonValue) || 0;
-        });
-
-      // ── 3. Merge and render ──
-      // Use perfMap as the base (all ad groups with spend), merge in won data
-      const allKeys = new Set([...Object.keys(perfMap), ...Object.keys(wonMap)]);
-
-      if (allKeys.size === 0) {
-        tbody.innerHTML = '<tr><td colspan="11" class="loading">No data for selected period.</td></tr>';
-        return;
-      }
-
-      const rows = Array.from(allKeys).map(key => {
-        const p = perfMap[key] || { campaign: key.split("||")[0], adGroup: key.split("||")[1], clicks: 0, impressions: 0, cost: 0, conversions: 0 };
-        const w = wonMap[key]  || { won: 0, wonValue: 0 };
-        return {
-          campaign:    p.campaign,
-          adGroup:     p.adGroup,
-          clicks:      p.clicks,
-          impressions: p.impressions,
-          cost:        p.cost,
-          conversions: p.conversions,
-          won:         w.won,
-          wonValue:    w.wonValue,
-          cpc:         p.clicks > 0      ? p.cost / p.clicks      : 0,
-          costConv:    p.conversions > 0 ? p.cost / p.conversions : 0,
-          roas:        p.cost > 0        ? w.wonValue / p.cost    : 0
-        };
-      })
-      .filter(r => r.clicks > 0 || r.won > 0)
-      .sort((a, b) => b.cost - a.cost);
-
-      if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="11" class="loading">No active ads for selected period.</td></tr>';
-        return;
-      }
-
-      tbody.innerHTML = rows.map(r => `
-        <tr>
-          <td>${r.campaign}</td>
-          <td>${r.adGroup}</td>
-          <td>${r.clicks.toLocaleString()}</td>
-          <td>${r.impressions.toLocaleString()}</td>
-          <td>$${r.cpc.toFixed(2)}</td>
-          <td>$${r.cost.toFixed(2)}</td>
-          <td>${r.conversions.toFixed(1)}</td>
-          <td>${r.costConv > 0 ? "$" + r.costConv.toFixed(2) : "—"}</td>
-          <td>${r.won}</td>
-          <td>$${r.wonValue.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-          <td>${r.roas > 0 ? r.roas.toFixed(2) : "—"}</td>
-        </tr>
-      `).join("");
-    }
-
-    function onDataLoaded() {
-      loaded++;
-      if (loaded === 2) applyDateRange();
-    }
-
-    // Load daily perf data (from "GAds Daily" sheet via worker)
-    fetch(`${PROXY_URL}/?endpoint=perf`)
-      .then(res => res.json())
-      .then(json => { perfData = json.data || []; onDataLoaded(); })
-      .catch(() => {
-        document.getElementById("report-body").innerHTML =
-          '<tr><td colspan="11" class="error">Failed to load performance data.</td></tr>';
+function fetchWonOpportunities() {
+  var wonMap = {};
+  var page = 1, hasMore = true;
+  while (hasMore) {
+    var url = "https://services.leadconnectorhq.com/opportunities/search?location_id=" + GHL_LOCATION_ID + "&status=won&limit=100&page=" + page;
+    try {
+      var res  = UrlFetchApp.fetch(url, { headers: { "Authorization": "Bearer " + GHL_API_TOKEN, "Version": "2021-04-15" }, muteHttpExceptions: true });
+      if (res.getResponseCode() !== 200) break;
+      var opps = JSON.parse(res.getContentText()).opportunities || [];
+      opps.forEach(function(o) {
+        var cid = o.contactId || (o.contact && o.contact.id);
+        if (cid) wonMap[cid] = (wonMap[cid] || 0) + parseFloat(o.monetaryValue || 0);
       });
+      Logger.log("Won opps page " + page + ": " + opps.length);
+      if (opps.length < 100) hasMore = false;
+      else { page++; Utilities.sleep(250); }
+    } catch(e) { Logger.log("Won opp error: " + e); break; }
+  }
+  return wonMap;
+}
 
-    // Load contact/won data (from "GHL Contacts" sheet via worker)
-    fetch(`${PROXY_URL}/?endpoint=contacts`)
-      .then(res => res.json())
-      .then(json => { contactData = json.data || []; onDataLoaded(); })
-      .catch(() => {
-        document.getElementById("report-body").innerHTML =
-          '<tr><td colspan="11" class="error">Failed to load contact data.</td></tr>';
+function fetchGoogleAdsContacts() {
+  var contactMap = {};
+  var page = 1, hasMore = true;
+  while (hasMore) {
+    var url = "https://services.leadconnectorhq.com/contacts/?locationId=" + GHL_LOCATION_ID + "&limit=100&page=" + page;
+    try {
+      var res = UrlFetchApp.fetch(url, { headers: { "Authorization": "Bearer " + GHL_API_TOKEN, "Version": "2021-04-15" }, muteHttpExceptions: true });
+      if (res.getResponseCode() !== 200) break;
+      var contacts = JSON.parse(res.getContentText()).contacts || [];
+      var googleCount = 0;
+      contacts.forEach(function(c) {
+        var src = (c.source || "").toLowerCase();
+        var isGoogle = src.indexOf("google") !== -1 || src.indexOf("adwords") !== -1;
+        if (!isGoogle) {
+          var attrs = c.attributions || [];
+          for (var i = 0; i < attrs.length; i++) {
+            var s = (attrs[i].utmSessionSource || "").toLowerCase();
+            var m = (attrs[i].medium || "").toLowerCase();
+            if (s.indexOf("google") !== -1 || m.indexOf("cpc") !== -1 || m.indexOf("ppc") !== -1 || m.indexOf("paid") !== -1) {
+              isGoogle = true; break;
+            }
+          }
+        }
+        if (!isGoogle) return;
+        googleCount++;
+        var attrs = c.attributions || [];
+        var first = null;
+        for (var i = 0; i < attrs.length; i++) { if (attrs[i].isFirst) { first = attrs[i]; break; } }
+        if (!first && attrs.length > 0) first = attrs[0];
+        var campaign   = first ? (first.campaignName || first.utmCampaign  || "Unknown") : "Unknown";
+        var adGroup    = first ? (first.adSetName    || first.utmContent  || "Unknown") : "Unknown";
+        var campaignId = first ? (String(first.utmCampaignId || "")) : "";
+        var adGroupId  = first ? (String(first.utmAdGroupId  || "")) : "";
+        var pageUrl    = first ? (first.pageUrl || first.url || "") : "";
+        var cid = c.id || c.contactId;
+        if (cid) {
+          contactMap[cid] = { campaign: campaign, adGroup: adGroup, campaignId: campaignId, adGroupId: adGroupId, pageUrl: pageUrl };
+
+        }
       });
-  </script>
-</body>
-</html>
+      Logger.log("Page " + page + ": " + contacts.length + " scanned, " + googleCount + " Google contacts");
+      if (contacts.length < 100) hasMore = false;
+      else { page++; Utilities.sleep(250); }
+    } catch(e) { Logger.log("Contact error: " + e); break; }
+  }
+  return contactMap;
+}
