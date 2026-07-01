@@ -5,30 +5,32 @@
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; padding: 0; font-family: Arial, sans-serif; background: #fff; }
-    #meta-report { width: 100%; padding: 10px; }
+    #report { width: 100%; padding: 10px; }
     .report-header { text-align: center; margin-bottom: 12px; }
     .report-header h1 { font-size: 18px; font-weight: bold; color: #000; margin: 0 0 2px 0; }
     .report-date { font-size: 11px; color: #666; font-style: italic; margin: 0; }
-    .date-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; }
+    .date-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; }
     .date-controls label { font-size: 13px; color: #374151; font-weight: 600; }
     .date-controls select { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; color: #374151; background: #fff; cursor: pointer; }
     .date-range-inputs { display: flex; align-items: center; gap: 6px; }
     .date-range-inputs input[type="date"] { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; }
     .date-range-inputs span { font-size: 13px; color: #6b7280; }
-    .apply-btn { padding: 6px 16px; background: #2563eb; color: #fff; border: none; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    .apply-btn:hover { background: #1d4ed8; }
+    .apply-btn { padding: 6px 16px; background: #16a34a; color: #fff; border: none; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .apply-btn:hover { background: #15803d; }
     .table-responsive { overflow-x: auto; border: 1px solid #d1d5db; }
     table { width: 100%; border-collapse: collapse; background: #fff; }
-    th { background: #f8fafc; color: #374151; font-weight: bold; font-size: 13px; padding: 7px 10px; border: 1px solid #d1d5db; text-align: center; }
+    th { background: #34A853; color: #fff; font-weight: bold; font-size: 13px; padding: 7px 10px; border: 1px solid #2d9147; text-align: center; }
     td { padding: 6px 10px; border: 1px solid #e5e7eb; font-size: 13px; color: #000; text-align: center; white-space: nowrap; }
+    tr:nth-child(even) td { background: #f0fdf4; }
     .loading { color: #9ca3af; padding: 20px; text-align: center; }
     .error { color: #ef4444; padding: 20px; text-align: center; }
+    .won-note { font-size: 11px; color: #6b7280; font-style: italic; margin-top: 6px; text-align: right; }
   </style>
 </head>
 <body>
-  <div id="meta-report">
+  <div id="report">
     <div class="report-header">
-      <h1>META Ad Performance</h1>
+      <h1>Google Ads Performance</h1>
       <p class="report-date" id="date-label">Live Dashboard View</p>
     </div>
     <div class="date-controls">
@@ -55,25 +57,35 @@
         <thead>
           <tr>
             <th>Campaign</th>
-            <th>Ad</th>
-            <th>Conversion</th>
+            <th>Ad Group</th>
+            <th>Clicks</th>
+            <th>Impressions</th>
             <th>CPC</th>
             <th>Total Spend</th>
+            <th>Conversions</th>
+            <th>Cost/Conv</th>
             <th>Won</th>
-            <th>Value</th>
+            <th>Won Value</th>
             <th>ROAS</th>
           </tr>
         </thead>
         <tbody id="report-body">
-          <tr><td colspan="8" class="loading">Loading...</td></tr>
+          <tr><td colspan="11" class="loading">Loading...</td></tr>
         </tbody>
       </table>
     </div>
+    <p class="won-note">Won / Won Value reflect leads acquired within the selected date range.</p>
   </div>
 
   <script>
-    const PROXY_URL = "https://ghl-proxy.apfelipe94.workers.dev";
-    let allData = []; // One row per contact
+    const PROXY_URL = "https://gads-proxy-atl.apfelipe94.workers.dev/";
+
+    // Two datasets loaded in parallel:
+    // perfData    — daily Google Ads metrics (date, campaign, adGroup, conversions, cpc, cost, clicks, impressions)
+    // contactData — one row per GHL contact (dateAdded, campaign, adGroup, won, wonValue)
+    let perfData    = [];
+    let contactData = [];
+    let loaded      = 0;
 
     function fmt(d) { return d.toISOString().split("T")[0]; }
 
@@ -116,88 +128,107 @@
       renderTable(startDate, endDate);
     }
 
-    function parseNum(s) {
-      return parseFloat(String(s || "0").replace(/[$,\s]/g, "")) || 0;
-    }
-
     function renderTable(startDate, endDate) {
       const tbody = document.getElementById("report-body");
 
-      // Filter contacts by dateAdded within selected range
-      // Won data is ALL-TIME for those contacts (not filtered by date)
-      const filtered = allData.filter(r => {
-        const d = (r.date || "").trim();
-        return d >= startDate && d <= endDate;
-      });
+      // ── 1. Aggregate daily spend/clicks by campaign+adGroup within date range ──
+      const perfMap = {};
+      perfData
+        .filter(r => r.date >= startDate && r.date <= endDate)
+        .forEach(r => {
+          const key = `${r.campaign}||${r.adGroup}`;
+          if (!perfMap[key]) perfMap[key] = { campaign: r.campaign, adGroup: r.adGroup,
+            clicks: 0, impressions: 0, cost: 0, conversions: 0 };
+          perfMap[key].clicks      += parseFloat(r.clicks)      || 0;
+          perfMap[key].impressions += parseFloat(r.impressions)  || 0;
+          perfMap[key].cost        += parseFloat(r.cost)         || 0;
+          perfMap[key].conversions += parseFloat(r.conversions)  || 0;
+        });
 
-      if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading">No leads found for selected period.</td></tr>';
+      // ── 2. Aggregate Won/WonValue from contacts acquired within date range ──
+      // Each contact row = one lead, so summing is correct (like Meta dashboard)
+      const wonMap = {};
+      contactData
+        .filter(r => r.date >= startDate && r.date <= endDate)
+        .forEach(r => {
+          const key = `${r.campaign}||${r.adGroup}`;
+          if (!wonMap[key]) wonMap[key] = { won: 0, wonValue: 0 };
+          wonMap[key].won      += parseFloat(r.won)      || 0;
+          wonMap[key].wonValue += parseFloat(r.wonValue) || 0;
+        });
+
+      // ── 3. Merge and render ──
+      // Use perfMap as the base (all ad groups with spend), merge in won data
+      const allKeys = new Set([...Object.keys(perfMap), ...Object.keys(wonMap)]);
+
+      if (allKeys.size === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="loading">No data for selected period.</td></tr>';
         return;
       }
 
-      // Aggregate by campaign + ad
-      const adMap = {};
-      filtered.forEach(r => {
-        const key = `${r.campaign}||${r.ad}`;
-        if (!adMap[key]) {
-          adMap[key] = {
-            campaign: r.campaign,
-            ad: r.ad,
-            conversions: 0,
-            totalSpend: 0,
-            won: 0,
-            value: 0
-          };
-        }
-        const conv  = parseNum(r.conversion);
-        const cpc   = parseNum(r.cpc);
-        const won   = parseNum(r.won);
-        const value = parseNum(r.value);
-
-        adMap[key].conversions += conv;
-        adMap[key].totalSpend  += conv * cpc;
-        adMap[key].won         += won;
-        adMap[key].value       += value;
-      });
-
-      const rows = Object.values(adMap)
-        .map(r => ({
-          ...r,
-          cpc:  r.conversions > 0 ? r.totalSpend / r.conversions : 0,
-          roas: r.totalSpend > 0 ? r.value / r.totalSpend : 0
-        }))
-        .filter(r => r.conversions > 0 || r.value > 0)
-        .sort((a, b) => b.value !== a.value ? b.value - a.value : b.conversions - a.conversions);
+      const rows = Array.from(allKeys).map(key => {
+        const p = perfMap[key] || { campaign: key.split("||")[0], adGroup: key.split("||")[1], clicks: 0, impressions: 0, cost: 0, conversions: 0 };
+        const w = wonMap[key]  || { won: 0, wonValue: 0 };
+        return {
+          campaign:    p.campaign,
+          adGroup:     p.adGroup,
+          clicks:      p.clicks,
+          impressions: p.impressions,
+          cost:        p.cost,
+          conversions: p.conversions,
+          won:         w.won,
+          wonValue:    w.wonValue,
+          cpc:         p.clicks > 0      ? p.cost / p.clicks      : 0,
+          costConv:    p.conversions > 0 ? p.cost / p.conversions : 0,
+          roas:        p.cost > 0        ? w.wonValue / p.cost    : 0
+        };
+      })
+      .filter(r => r.clicks > 0 || r.won > 0)
+      .sort((a, b) => b.cost - a.cost);
 
       if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading">No active ads for selected period.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="loading">No active ads for selected period.</td></tr>';
         return;
       }
 
       tbody.innerHTML = rows.map(r => `
         <tr>
           <td>${r.campaign}</td>
-          <td>${r.ad}</td>
-          <td>${r.conversions}</td>
+          <td>${r.adGroup}</td>
+          <td>${r.clicks.toLocaleString()}</td>
+          <td>${r.impressions.toLocaleString()}</td>
           <td>$${r.cpc.toFixed(2)}</td>
-          <td>$${r.totalSpend.toFixed(2)}</td>
+          <td>$${r.cost.toFixed(2)}</td>
+          <td>${r.conversions.toFixed(1)}</td>
+          <td>${r.costConv > 0 ? "$" + r.costConv.toFixed(2) : "—"}</td>
           <td>${r.won}</td>
-          <td>$${r.value.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
-          <td>${r.roas.toFixed(2)}</td>
+          <td>$${r.wonValue.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          <td>${r.roas > 0 ? r.roas.toFixed(2) : "—"}</td>
         </tr>
       `).join("");
     }
 
-    // Load all contact data once, filter client-side
-    fetch(`${PROXY_URL}/?endpoint=sheet`)
+    function onDataLoaded() {
+      loaded++;
+      if (loaded === 2) applyDateRange();
+    }
+
+    // Load daily perf data (from "GAds Daily" sheet via worker)
+    fetch(`${PROXY_URL}/?endpoint=perf`)
       .then(res => res.json())
-      .then(json => {
-        allData = json.data || [];
-        applyDateRange();
-      })
+      .then(json => { perfData = json.data || []; onDataLoaded(); })
       .catch(() => {
         document.getElementById("report-body").innerHTML =
-          '<tr><td colspan="8" class="error">Failed to load data.</td></tr>';
+          '<tr><td colspan="11" class="error">Failed to load performance data.</td></tr>';
+      });
+
+    // Load contact/won data (from "GHL Contacts" sheet via worker)
+    fetch(`${PROXY_URL}/?endpoint=contacts`)
+      .then(res => res.json())
+      .then(json => { contactData = json.data || []; onDataLoaded(); })
+      .catch(() => {
+        document.getElementById("report-body").innerHTML =
+          '<tr><td colspan="11" class="error">Failed to load contact data.</td></tr>';
       });
   </script>
 </body>
